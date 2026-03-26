@@ -140,7 +140,11 @@ async def search_and_send(update_or_query, context, lat, lon, filter_type="all")
         )
 
     # Use the right reply method
-    reply_target = update_or_query.message if hasattr(update_or_query, "message") else update_or_query.message
+    if hasattr(update_or_query, "message"):
+    reply_target = update_or_query.message
+else:
+    reply_target = update_or_query
+    
     await reply_target.reply_text("\n".join(lines), parse_mode="Markdown")
 
     # Send each place as a map pin
