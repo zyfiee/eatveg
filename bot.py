@@ -114,17 +114,17 @@ async def search_and_send(update_or_query, context, lat, lon, filter_type="all")
     data = response.json()
     places = data.get("results", [])
 
+    # Determine reply target safely
+    reply_target = update_or_query.message
+
     if not places:
-        msg = "😔 No places found nearby. Try a different filter or a wider area."
-        if hasattr(update_or_query, "message"):
-            await update_or_query.message.reply_text(msg)
-        else:
-            await update_or_query.message.reply_text(msg)
+        await reply_target.reply_text("😔 No places found nearby. Try a different filter or a wider area.")
         return
 
     # Send summary list (top 5)
     top_places = places[:5]
     lines = [f"🌿 *Top {len(top_places)} Veg-Friendly Places Nearby:*\n"]
+
     for i, place in enumerate(top_places, 1):
         name = place.get("name", "Unknown")
         rating = place.get("rating", "N/A")
@@ -138,11 +138,7 @@ async def search_and_send(update_or_query, context, lat, lon, filter_type="all")
             f"   {stars} {rating} ({total} reviews) {status}\n"
             f"   📍 {address}\n"
         )
-reply_target = (
-    update_or_query.message
-    if hasattr(update_or_query, "message")
-    else update_or_query.callback_query.message
-)
+
     await reply_target.reply_text("\n".join(lines), parse_mode="Markdown")
 
     # Send each place as a map pin
