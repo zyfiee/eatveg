@@ -16,11 +16,9 @@ from telegram.ext import (
     filters,
 )
 
-# Environment variables
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 
-# Filter options
 FILTER_OPTIONS = {
     "all": "🥗 All Veg-Friendly",
     "pure_veg": "🌱 Pure Vegetarian",
@@ -33,91 +31,74 @@ FILTER_OPTIONS = {
 # ---------- /start ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
-        [KeyboardButton("📍 Share My Location", request_location=True)],
-        [KeyboardButton("🏠 Enter Address Manually")]
+        [
+            KeyboardButton("📍 Share My Location", request_location=True),
+            KeyboardButton("🏠 Enter Address Manually"),
+        ]
     ]
-    reply_markup = ReplyKeyboardMarkup(
-        keyboard, resize_keyboard=True, one_time_keyboard=True
-    )
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
     await update.message.reply_text(
         "👋 Welcome to *SG Veggie Finder*!\n\n"
-        "I can help you find vegetarian and veg-friendly places nearby.\n\n"
-        "You can either share your current location 📍 or enter a town name/area 🏠.",
+        "I'll help you find vegetarian and veg-friendly places near you.\n\n"
+        "Choose an option below 👇",
         parse_mode="Markdown",
         reply_markup=reply_markup,
     )
+
 
 # ---------- /help ----------
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🌿 *How to use SG Veggie Finder:*\n\n"
-        "1. Tap 📍 Share My Location\n"
-        "2. Or type your town name/area 🏠\n"
-        "3. I'll show nearby veg-friendly places\n"
-        "4. Use the filter buttons to narrow by type\n"
-        "5. Tap any result to see it on the map\n\n"
+        "1. Tap 📍 Share My Location or 🏠 Enter Address Manually\n"
+        "2. I'll show you nearby veg-friendly places\n"
+        "3. Use the filter buttons to narrow by type\n"
+        "4. Tap any result to see it on the map\n\n"
         "Commands:\n"
         "/start - Restart the bot\n"
         "/help - Show this message",
         parse_mode="Markdown",
     )
 
+
 # ---------- Location handler ----------
 async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    lat = update.message.location.latitude
-    lon = update.message.location.longitude
-
-    # Save location for later filters
-    context.user_data["lat"] = lat
-    context.user_data["lon"] = lon
-
-    await update.message.reply_text("🔍 Searching nearby vegetarian places...")
-
-    # Show filter buttons
-    await show_filter_buttons(update)
-
-    # Default search: all veg-friendly
-    await search_and_send(update, context, lat, lon, filter_type="all")
-
-# ---------- Manual address handler ----------
-async def handle_address(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    address = update.message.text.strip()
-
-    # Ignore button text itself
-    if address.lower() in ["📍 share my location", "🏠 enter address manually"]:
+    if update.message.text == "🏠 Enter Address Manually":
+        await update.message.reply_text("Please type the address, e.g., Bedok, Sengkang, etc.:")
+        context.user_data["awaiting_address"] = True
         return
 
-    # Use Google Geocoding API to get coordinates
-    url = "https://maps.googleapis.com/maps/api/geocode/json"
-    params = {"address": address, "key": GOOGLE_API_KEY}
-    response = requests.get(url, params=params)
-    data = response.json()
+    if update.message.location:
+        lat = update.message.location.latitude
+        lon = update.message.location.longitude
+        context.user_data["lat"] = lat
+        context.user_data["lon"] = lon
+        await search_with_filters(update, context)
 
-    if not data.get("results"):
-        await update.message.reply_text(
-            "⚠️ I couldn't find that location. Try another address or nearby town."
-        )
-        return
 
-    location = data["results"][0]["geometry"]["location"]
-    lat, lon = location["lat"], location["lng"]
+# ---------- Address input handler ----------
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get("awaiting_address"):
+        address = update.message.text
+        context.user_data["awaiting_address"] = False
+        # Geocode the address (biased to Singapore)
+        url = "https://maps.googleapis.com/maps/api/geocode/json"
+        params = {"address": address, "components": "country:SG", "key": GOOGLE_API_KEY}
+        response = requests.get(url, params=params)
+        data = response.json()
+        if data.get("status") != "OK" or not data.get("results"):
+            await update.message.reply_text("❌ Couldn't find that location. Try another address or use location sharing.")
+            return
+        location = data["results"][0]["geometry"]["location"]
+        context.user_data["lat"] = location["lat"]
+        context.user_data["lon"] = location["lng"]
+        await search_with_filters(update, context)
+    else:
+        await update.message.reply_text("Please use /start to begin or share your location.")
 
-    context.user_data["lat"] = lat
-    context.user_data["lon"] = lon
 
-    await update.message.reply_text(
-        f"🔍 Searching nearby veg-friendly places around *{address}*...",
-        parse_mode="Markdown"
-    )
-
-    # Show filter buttons
-    await show_filter_buttons(update)
-
-    # Default search: all veg-friendly
-    await search_and_send(update, context, lat, lon, filter_type="all")
-
-# ---------- Show filter buttons ----------
-async def show_filter_buttons(update_or_query):
+# ---------- Show filter buttons and search ----------
+async def search_with_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [
             InlineKeyboardButton("🥗 All Veg-Friendly", callback_data="filter:all"),
@@ -133,11 +114,9 @@ async def show_filter_buttons(update_or_query):
         ],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("Choose a filter:", reply_markup=reply_markup)
+    await search_and_send(update, context, context.user_data["lat"], context.user_data["lon"], "all")
 
-    if hasattr(update_or_query, "message"):
-        await update_or_query.message.reply_text("Choose a filter:", reply_markup=reply_markup)
-    else:
-        await update_or_query.callback_query.message.reply_text("Choose a filter:", reply_markup=reply_markup)
 
 # ---------- Filter button handler ----------
 async def handle_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -147,16 +126,16 @@ async def handle_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     filter_type = query.data.split(":")[1]
     lat = context.user_data.get("lat")
     lon = context.user_data.get("lon")
-
     if not lat or not lon:
-        await query.message.reply_text("Please share your location or enter an address first using /start")
+        await query.message.reply_text("Please share your location or enter an address first.")
         return
 
     label = FILTER_OPTIONS.get(filter_type, "All Veg-Friendly")
     await query.message.reply_text(f"🔍 Filtering by: *{label}*...", parse_mode="Markdown")
     await search_and_send(query, context, lat, lon, filter_type=filter_type)
 
-# ---------- Core search function ----------
+
+# ---------- Core search ----------
 async def search_and_send(update_or_query, context, lat, lon, filter_type="all"):
     keyword_map = {
         "all": "vegetarian restaurant",
@@ -169,23 +148,19 @@ async def search_and_send(update_or_query, context, lat, lon, filter_type="all")
     keyword = keyword_map.get(filter_type, "vegetarian restaurant")
 
     url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
-    params = {
-        "location": f"{lat},{lon}",
-        "radius": 1500,
-        "keyword": keyword,
-        "key": GOOGLE_API_KEY,
-    }
+    params = {"location": f"{lat},{lon}", "radius": 1500, "keyword": keyword, "key": GOOGLE_API_KEY}
 
     response = requests.get(url, params=params)
     data = response.json()
     places = data.get("results", [])
 
+    reply_target = update_or_query.message if hasattr(update_or_query, "message") else update_or_query.callback_query.message
+
     if not places:
-        msg = "😔 No places found nearby. Try a different filter or a wider area."
-        target = update_or_query.message if hasattr(update_or_query, "message") else update_or_query.callback_query.message
-        await target.reply_text(msg)
+        await reply_target.reply_text("😔 No places found nearby. Try a different filter or a wider area.")
         return
 
+    # Summary
     top_places = places[:5]
     lines = [f"🌿 *Top {len(top_places)} Veg-Friendly Places Nearby:*\n"]
     for i, place in enumerate(top_places, 1):
@@ -196,36 +171,28 @@ async def search_and_send(update_or_query, context, lat, lon, filter_type="all")
         open_now = place.get("opening_hours", {}).get("open_now")
         status = "🟢 Open" if open_now is True else ("🔴 Closed" if open_now is False else "")
         stars = "⭐" * round(float(rating)) if rating != "N/A" else ""
-        lines.append(
-            f"*{i}. {name}*\n"
-            f"   {stars} {rating} ({total} reviews) {status}\n"
-            f"   📍 {address}\n"
-        )
+        lines.append(f"*{i}. {name}*\n   {stars} {rating} ({total} reviews) {status}\n   📍 {address}\n")
 
-    # Send summary
-    target = update_or_query.message if hasattr(update_or_query, "message") else update_or_query.callback_query.message
-    await target.reply_text("\n".join(lines), parse_mode="Markdown")
+    await reply_target.reply_text("\n".join(lines), parse_mode="Markdown")
 
     # Send map pins
     for place in top_places:
+        name = place.get("name", "Place")
+        address = place.get("vicinity", "")
         geo = place.get("geometry", {}).get("location", {})
         place_lat = geo.get("lat")
         place_lon = geo.get("lng")
         if place_lat and place_lon:
-            await target.reply_venue(
-                latitude=place_lat,
-                longitude=place_lon,
-                title=place.get("name", "Place"),
-                address=place.get("vicinity", ""),
-            )
+            await reply_target.reply_venue(latitude=place_lat, longitude=place_lon, title=name, address=address)
+
 
 # ---------- Run the bot ----------
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(MessageHandler(filters.LOCATION, handle_location))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_address))
+    app.add_handler(MessageHandler(filters.LOCATION | filters.TEXT, handle_location))
+    app.add_handler(MessageHandler(filters.TEXT, handle_text))
     app.add_handler(CallbackQueryHandler(handle_filter, pattern="^filter:"))
     print("Bot is running...")
     app.run_polling()
