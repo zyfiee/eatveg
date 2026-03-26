@@ -64,7 +64,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ---------- Location handler ----------
 async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text == "🏠 Enter Address Manually":
-        await update.message.reply_text("Please type the address, e.g., Bedok, Sengkang, etc.:")
+        await update.message.reply_text("Please type the address (e.g., Bedok, Sengkang, etc.):")
         context.user_data["awaiting_address"] = True
         return
 
@@ -86,10 +86,28 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         params = {"address": address, "components": "country:SG", "key": GOOGLE_API_KEY}
         response = requests.get(url, params=params)
         data = response.json()
+
         if data.get("status") != "OK" or not data.get("results"):
-            await update.message.reply_text("❌ Couldn't find that location. Try another address or use location sharing.")
+            await update.message.reply_text(
+                "❌ Couldn't find that location. Try another address or use location sharing."
+            )
             return
-        location = data["results"][0]["geometry"]["location"]
+
+        # Check if location is in Singapore
+        result = data["results"][0]
+        country_components = [
+            comp["long_name"].lower()
+            for comp in result.get("address_components", [])
+            if "country" in comp.get("types", [])
+        ]
+        if "singapore" not in country_components:
+            await update.message.reply_text(
+                "❌ This feature is only available in Singapore.\n"
+                "Please use 📍 Share My Location instead."
+            )
+            return
+
+        location = result["geometry"]["location"]
         context.user_data["lat"] = location["lat"]
         context.user_data["lon"] = location["lng"]
         await search_with_filters(update, context)
